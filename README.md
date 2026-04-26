@@ -166,7 +166,7 @@ n8n creates its first owner account through the web UI on first access. MinIO us
 
 ### Shared Database Usage
 
-PostgreSQL is intentionally not exposed to the host or public internet. Containers on the internal Docker network can connect with:
+PostgreSQL is intentionally not exposed to the public internet. It is bound only to `127.0.0.1:5432` on the VPS host for SSH-tunneled administration, while containers on the internal Docker network can connect with:
 
 - Host: `postgres`
 - Port: `5432`
@@ -203,6 +203,29 @@ GRANT ALL PRIVILEGES ON DATABASE workflow_app TO workflow_app_user;
 ```
 
 Prefer creating separate users per workflow or application. Do not reuse the n8n application user for unrelated databases.
+
+### Connecting from DBeaver or an IDE
+
+The PostgreSQL port is bound to localhost on the VPS, so remote database tools must connect through SSH. This keeps port `5432` closed to the public internet while still allowing administration from a local workstation.
+
+Create an SSH tunnel from your workstation:
+
+```bash
+ssh -L 5432:127.0.0.1:5432 user@your-vps-host
+```
+
+Then configure DBeaver, DataGrip, VS Code, or another PostgreSQL client with:
+
+```text
+Host:     127.0.0.1
+Port:     5432
+Database: value of POSTGRES_DEFAULT_DB, N8N_DB_NAME, or another database
+User:     value of POSTGRES_ADMIN_USER or a dedicated database user
+Password: matching PostgreSQL password from .env
+SSL:      disabled unless you add PostgreSQL TLS separately
+```
+
+For DBeaver specifically, you can either keep the terminal SSH tunnel open and use the local settings above, or configure the same VPS SSH credentials in DBeaver's SSH tunnel tab.
 
 ### Backup Procedures
 

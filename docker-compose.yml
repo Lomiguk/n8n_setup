@@ -25,6 +25,9 @@ services:
       - traefik_letsencrypt:/letsencrypt
     networks:
       - public
+    labels:
+      - traefik.http.middlewares.bruteforce.ratelimit.average=50
+      - traefik.http.middlewares.bruteforce.ratelimit.burst=100
     healthcheck:
       test: ["CMD", "traefik", "healthcheck", "--ping"]
       interval: 30s
@@ -42,6 +45,8 @@ services:
       N8N_DB_NAME: ${N8N_DB_NAME}
       N8N_DB_USER: ${N8N_DB_USER}
       N8N_DB_PASSWORD: ${N8N_DB_PASSWORD}
+    ports:
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./postgres/init:/docker-entrypoint-initdb.d:ro
@@ -96,7 +101,7 @@ services:
       - traefik.http.middlewares.n8n-headers.headers.STSSeconds=31536000
       - traefik.http.middlewares.n8n-headers.headers.STSIncludeSubdomains=true
       - traefik.http.middlewares.n8n-headers.headers.STSPreload=true
-      - traefik.http.routers.n8n.middlewares=n8n-headers
+      - traefik.http.routers.n8n.middlewares=n8n-headers,bruteforce
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:5678/healthz >/dev/null 2>&1 || exit 1"]
       interval: 30s
@@ -132,6 +137,7 @@ services:
       - traefik.http.routers.minio-console.tls.certresolver=letsencrypt
       - traefik.http.services.minio-console.loadbalancer.server.port=9001
       - traefik.http.routers.minio-console.service=minio-console
+      - traefik.http.routers.minio-console.middlewares=bruteforce
     healthcheck:
       test: ["CMD", "mc", "ready", "local"]
       interval: 30s
@@ -160,6 +166,7 @@ services:
       - traefik.http.routers.dozzle.tls.certresolver=letsencrypt
       - traefik.http.services.dozzle.loadbalancer.server.port=8080
       - traefik.http.routers.dozzle.service=dozzle
+      - traefik.http.routers.dozzle.middlewares=bruteforce
 
   backup:
     image: offen/docker-volume-backup:v2
