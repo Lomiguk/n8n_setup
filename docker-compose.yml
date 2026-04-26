@@ -1,0 +1,203 @@
+services:
+  traefik:
+    image: traefik:v3.1
+    container_name: traefik
+    restart: unless-stopped
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --certificatesresolvers.letsencrypt.acme.email=${SSL_EMAIL}
+      - --certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json
+      - --certificatesresolvers.letsencrypt.acme.httpchallenge=true
+      - --certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web
+      - --ping=true
+      - --log.level=INFO
+      - --accesslog=true
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik_letsencrypt:/letsencrypt
+    networks:
+      - public
+    healthcheck:
+      test: ["CMD", "traefik", "healthcheck", "--ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_ADMIN_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DEFAULT_DB}
+      N8N_DB_NAME: ${N8N_DB_NAME}
+      N8N_DB_USER: ${N8N_DB_USER}
+      N8N_DB_PASSWORD: ${N8N_DB_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+      - postgres_dump:/backup/postgres
+    networks:
+      - internal
+    labels:
+      - docker-volume-backup.exec-label=n8n-stack-backup
+      - docker-volume-backup.archive-pre=/bin/sh -c 'pg_dumpall -U "$$POSTGRES_USER" > /backup/postgres/pg_dumpall.sql'
+      - docker-volume-backup.archive-post=/bin/sh -c 'rm -f /backup/postgres/pg_dumpall.sql'
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: n8n
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: postgres
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_DATABASE: ${N8N_DB_NAME}
+      DB_POSTGRESDB_USER: ${N8N_DB_USER}
+      DB_POSTGRESDB_PASSWORD: ${N8N_DB_PASSWORD}
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}
+      N8N_HOST: ${DOMAIN_N8N}
+      N8N_PROTOCOL: https
+      N8N_PORT: 5678
+      WEBHOOK_URL: https://${DOMAIN_N8N}/
+      N8N_EDITOR_BASE_URL: https://${DOMAIN_N8N}/
+      GENERIC_TIMEZONE: ${GENERIC_TIMEZONE}
+      TZ: ${TZ}
+    volumes:
+      - n8n_data:/home/node/.n8n
+    networks:
+      - public
+      - internal
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=${TRAEFIK_PUBLIC_NETWORK}
+      - traefik.http.routers.n8n.rule=Host(`${DOMAIN_N8N}`)
+      - traefik.http.routers.n8n.entrypoints=websecure
+      - traefik.http.routers.n8n.tls.certresolver=letsencrypt
+      - traefik.http.services.n8n.loadbalancer.server.port=5678
+      - traefik.http.middlewares.n8n-headers.headers.STSSeconds=31536000
+      - traefik.http.middlewares.n8n-headers.headers.STSIncludeSubdomains=true
+      - traefik.http.middlewares.n8n-headers.headers.STSPreload=true
+      - traefik.http.routers.n8n.middlewares=n8n-headers
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:5678/healthz >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+  minio:
+    image: minio/minio:RELEASE.2025-01-20T14-49-07Z
+    container_name: minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_SERVER_URL: https://${DOMAIN_MINIO_API}
+      MINIO_BROWSER_REDIRECT_URL: https://${DOMAIN_MINIO_CONSOLE}
+    volumes:
+      - minio_data:/data
+    networks:
+      - public
+      - internal
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=${TRAEFIK_PUBLIC_NETWORK}
+      - traefik.http.routers.minio-api.rule=Host(`${DOMAIN_MINIO_API}`)
+      - traefik.http.routers.minio-api.entrypoints=websecure
+      - traefik.http.routers.minio-api.tls.certresolver=letsencrypt
+      - traefik.http.services.minio-api.loadbalancer.server.port=9000
+      - traefik.http.routers.minio-console.rule=Host(`${DOMAIN_MINIO_CONSOLE}`)
+      - traefik.http.routers.minio-console.entrypoints=websecure
+      - traefik.http.routers.minio-console.tls.certresolver=letsencrypt
+      - traefik.http.services.minio-console.loadbalancer.server.port=9001
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  dozzle:
+    image: amir20/dozzle:v8.10.6
+    container_name: dozzle
+    restart: unless-stopped
+    environment:
+      DOZZLE_NO_ANALYTICS: "true"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - public
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=${TRAEFIK_PUBLIC_NETWORK}
+      - traefik.http.routers.dozzle.rule=Host(`${DOMAIN_DOZZLE}`)
+      - traefik.http.routers.dozzle.entrypoints=websecure
+      - traefik.http.routers.dozzle.tls.certresolver=letsencrypt
+      - traefik.http.services.dozzle.loadbalancer.server.port=8080
+      - traefik.http.middlewares.dozzle-auth.basicauth.users=${DOZZLE_BASIC_AUTH}
+      - traefik.http.routers.dozzle.middlewares=dozzle-auth
+    healthcheck:
+      test: ["CMD-SHELL", "/dozzle healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  backup:
+    image: offen/docker-volume-backup:v2
+    container_name: backup
+    restart: unless-stopped
+    network_mode: none
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      BACKUP_CRON_EXPRESSION: ${BACKUP_CRON_EXPRESSION}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS}
+      BACKUP_ARCHIVE: /archive
+      BACKUP_FILENAME: n8n-stack-latest.{{ .Extension }}
+      BACKUP_PRUNING_PREFIX: n8n-stack-
+      BACKUP_COMPRESSION: gz
+      EXEC_LABEL: n8n-stack-backup
+      EXEC_FORWARD_OUTPUT: "true"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - n8n_data:/backup/n8n_data:ro
+      - minio_data:/backup/minio_data:ro
+      - traefik_letsencrypt:/backup/traefik_letsencrypt:ro
+      - postgres_dump:/backup/postgres_dump:ro
+      - ./backups:/archive
+
+volumes:
+  traefik_letsencrypt:
+  postgres_data:
+  postgres_dump:
+  n8n_data:
+  minio_data:
+
+networks:
+  public:
+    external: true
+    name: ${TRAEFIK_PUBLIC_NETWORK}
+  internal:
+    external: true
+    name: ${APP_INTERNAL_NETWORK}
