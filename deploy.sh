@@ -36,11 +36,14 @@ read_env_value() {
 TRAEFIK_PUBLIC_NETWORK="$(read_env_value TRAEFIK_PUBLIC_NETWORK)"
 APP_INTERNAL_NETWORK="$(read_env_value APP_INTERNAL_NETWORK)"
 DOMAIN_N8N="$(read_env_value DOMAIN_N8N)"
+DOZZLE_USERNAME="$(read_env_value DOZZLE_USERNAME)"
+DOZZLE_PASSWORD="$(read_env_value DOZZLE_PASSWORD)"
 
 : "${TRAEFIK_PUBLIC_NETWORK:?TRAEFIK_PUBLIC_NETWORK is required in .env}"
 : "${APP_INTERNAL_NETWORK:?APP_INTERNAL_NETWORK is required in .env}"
 : "${DOMAIN_N8N:?DOMAIN_N8N is required in .env}"
-
+: "${DOZZLE_USERNAME:?DOZZLE_USERNAME is required in .env}"
+: "${DOZZLE_PASSWORD:?DOZZLE_PASSWORD is required in .env}"
 if ! command -v docker >/dev/null 2>&1; then
   fail "docker is not installed or not in PATH."
 fi
@@ -65,6 +68,11 @@ create_network_if_missing "$TRAEFIK_PUBLIC_NETWORK"
 create_network_if_missing "$APP_INTERNAL_NETWORK"
 
 mkdir -p backups
+
+if [ ! -f "users.yml" ]; then
+  info "Generating encrypted users.yml for Dozzle..."
+  docker run --rm amir20/dozzle:v8.10.6 generate "$DOZZLE_USERNAME" --password "$DOZZLE_PASSWORD" > users.yml
+fi
 
 info "Starting reverse proxy first so ACME and routing are ready."
 docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d traefik

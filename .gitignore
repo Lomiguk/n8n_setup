@@ -1,0 +1,7 @@
+# Environment and secrets
+.env
+users.yml
+
+# Local backups and generated archives
+backups/
+*.tar.gz

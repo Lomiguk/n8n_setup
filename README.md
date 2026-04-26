@@ -42,7 +42,7 @@ Expected repository tree:
 
 ### Analysis & Reasoning
 
-The `.env` file contains all deployment-specific values: DNS hostnames, Let's Encrypt email, database credentials, n8n encryption key, MinIO credentials, and Dozzle Basic Auth. Secrets are intentionally kept out of `docker-compose.yml` so the compose file can be committed while `.env` remains private.
+The `.env` file contains all deployment-specific values: DNS hostnames, Let's Encrypt email, database credentials, n8n encryption key, MinIO credentials, and Dozzle login credentials. Secrets are intentionally kept out of `docker-compose.yml` so the compose file can be committed while `.env` remains private.
 
 Copy the example and edit it:
 
@@ -55,10 +55,9 @@ Generate strong secret values:
 
 ```bash
 openssl rand -hex 32
-docker run --rm httpd:2.4-alpine htpasswd -nbB admin 'replace-with-strong-password'
 ```
 
-Use the `openssl` output for `N8N_ENCRYPTION_KEY`. Use the `htpasswd` output for `DOZZLE_BASIC_AUTH`, but replace every `$` in the generated hash with `$$` before saving it in `.env` because Docker Compose interpolates `$` characters.
+Use the `openssl` output for `N8N_ENCRYPTION_KEY`. Set `DOZZLE_USERNAME` and `DOZZLE_PASSWORD` directly in `.env`; `deploy.sh` reads those plain text values and automatically generates the encrypted `users.yml` file used by Dozzle.
 
 ## Phase 3: Docker Compose Infrastructure
 
@@ -86,6 +85,8 @@ docker compose --env-file .env config
 ### Analysis & Reasoning
 
 `deploy.sh` starts by verifying `.env`, then creates the external Docker networks required by Compose. Traefik starts first so it can bind ports `80` and `443`, initialize routing, and answer Let's Encrypt HTTP challenges. The rest of the services start afterward.
+
+Before containers are started, `deploy.sh` also reads `DOZZLE_USERNAME` and `DOZZLE_PASSWORD` from `.env` and runs a temporary Dozzle container to generate the encrypted `users.yml` authentication file.
 
 The deployment script then polls `https://$DOMAIN_N8N/healthz` until it receives `200`, `302`, or `401`. These statuses prove the domain reaches the n8n route through the reverse proxy.
 
@@ -161,7 +162,7 @@ Access services through HTTPS only:
 - MinIO S3 API: `https://$DOMAIN_MINIO_API`
 - Dozzle: `https://$DOMAIN_DOZZLE`
 
-n8n creates its first owner account through the web UI on first access. MinIO uses `MINIO_ROOT_USER` and `MINIO_ROOT_PASSWORD`. Dozzle is protected by Traefik Basic Auth using `DOZZLE_BASIC_AUTH`.
+n8n creates its first owner account through the web UI on first access. MinIO uses `MINIO_ROOT_USER` and `MINIO_ROOT_PASSWORD`. Dozzle uses its native login page with `DOZZLE_USERNAME` and `DOZZLE_PASSWORD` from `.env`.
 
 ### Shared Database Usage
 
@@ -320,7 +321,7 @@ Implemented controls:
 - Only ports `80` and `443` are published on the host.
 - PostgreSQL has no public route and is reachable only on the internal Docker network.
 - n8n, MinIO, and Dozzle are routed through Traefik with automatic TLS.
-- Dozzle is protected with Traefik Basic Auth.
+- Dozzle is protected by its native simple authentication backed by an auto-generated, encrypted `users.yml` file.
 - The Docker socket is mounted read-only where required.
 - Secrets are kept in `.env`, not committed into Compose.
 

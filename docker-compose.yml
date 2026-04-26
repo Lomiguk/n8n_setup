@@ -126,10 +126,12 @@ services:
       - traefik.http.routers.minio-api.entrypoints=websecure
       - traefik.http.routers.minio-api.tls.certresolver=letsencrypt
       - traefik.http.services.minio-api.loadbalancer.server.port=9000
+      - traefik.http.routers.minio-api.service=minio-api
       - traefik.http.routers.minio-console.rule=Host(`${DOMAIN_MINIO_CONSOLE}`)
       - traefik.http.routers.minio-console.entrypoints=websecure
       - traefik.http.routers.minio-console.tls.certresolver=letsencrypt
       - traefik.http.services.minio-console.loadbalancer.server.port=9001
+      - traefik.http.routers.minio-console.service=minio-console
     healthcheck:
       test: ["CMD", "mc", "ready", "local"]
       interval: 30s
@@ -143,8 +145,11 @@ services:
     restart: unless-stopped
     environment:
       DOZZLE_NO_ANALYTICS: "true"
+      DOZZLE_AUTH_PROVIDER: simple
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
+      - dozzle_data:/data
+      - ./users.yml:/data/users.yml:ro
     networks:
       - public
     labels:
@@ -154,13 +159,7 @@ services:
       - traefik.http.routers.dozzle.entrypoints=websecure
       - traefik.http.routers.dozzle.tls.certresolver=letsencrypt
       - traefik.http.services.dozzle.loadbalancer.server.port=8080
-      - traefik.http.middlewares.dozzle-auth.basicauth.users=${DOZZLE_BASIC_AUTH}
-      - traefik.http.routers.dozzle.middlewares=dozzle-auth
-    healthcheck:
-      test: ["CMD-SHELL", "/dozzle healthcheck"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
+      - traefik.http.routers.dozzle.service=dozzle
 
   backup:
     image: offen/docker-volume-backup:v2
@@ -193,6 +192,7 @@ volumes:
   postgres_dump:
   n8n_data:
   minio_data:
+  dozzle_data:
 
 networks:
   public:
